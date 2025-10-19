@@ -1,29 +1,36 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+
 import { makeModel } from "./gemini/gemini.js";
 import { buildSystemPrompt } from "./gemini/tinaPrompt.js";
-import { TinaTurnSchema } from "./util/jsonSchema.js";
+import { safeParseJSON } from "./util/json.js";
 import { violatesRules } from "./domain/rules.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Simple health
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, model: "gemini-2.5-flash" })
+);
+
+// Main Tina endpoint
 app.post("/api/tina/next", async (req, res) => {
   const { history = [], consent = "unknown" } = req.body || {};
 
-  //  opt-in
+  // 1) Opt-in intro: NOT model-driven
   if (history.length === 0) {
     return res.json({
       action: "ask",
       message:
-        "I’m Tina. I help you choose the right insurance policy. May I ask a few personal questions to make sure I recommend the best policy for you?",
-      followUpQuestion: "Is it okay if I ask you a few quick questions first?",
+        "I’m Tina. I help you choose the right insurance policy. May I ask a few personal questions to make sure I recommend the best fit?",
+      followUpQuestion: "Is it okay if I ask a few quick questions first?",
     });
   }
 
-  // opt-in declined
+  // 2) Respect decline
   if (consent === "declined") {
     return res.json({
       action: "recommend",
@@ -33,39 +40,26 @@ app.post("/api/tina/next", async (req, res) => {
     });
   }
 
-  // asks questions and eventually recommends
+  // 3) Ask/recommend via model
   try {
     const model = makeModel();
-
     const system = buildSystemPrompt();
-    const content = [
-      { role: "user", parts: [{ text: system }] },
+
+    const contents = [
+      { role: "user", parts: [{ text: system }] }, // pseudo-system
       ...history.map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.text }],
       })),
     ];
 
-    const result = await model.generateContent({
-      contents: content,
-      responseMimeType: "application/json",
-      responseSchema: TinaTurnSchema,
-    });
+    // Keep it simple and widely-compatible
+    const result = await model.generateContent({ contents });
+    const raw = result?.response?.text?.() ?? "";
 
-    const raw = result.response.text();
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      // ask follow up question as a fallback to inconlusive responses
-      data = {
-        action: "ask",
-        message: "Thanks! I have a quick question to get us started.",
-        followUpQuestion: raw.trim() || "What kind of vehicle do you drive?",
-      };
-    }
+    let data = safeParseJSON(raw);
 
-    // recommend with rules enforxed
+    // Apply server-side rule guard on recommendations
     if (
       data.action === "recommend" &&
       Array.isArray(data.recommendedProducts)
@@ -74,26 +68,25 @@ app.post("/api/tina/next", async (req, res) => {
       data.recommendedProducts = data.recommendedProducts.filter(
         (r) => !violatesRules(r, facts)
       );
-
-      // If everything got filtered out due to rules, pivot back to a clarifying ask
       if (data.recommendedProducts.length === 0) {
-        data.action = "ask";
-        data.message =
-          "I want to make sure the recommendation fits the rules. A couple of quick checks:";
-        data.followUpQuestion =
-          data.missingInfo?.[0] ||
-          "What type of vehicle is it, and how old is it (in years)?";
+        data = {
+          action: "ask",
+          message:
+            "I want to double-check a couple details so I can follow the eligibility rules.",
+          followUpQuestion:
+            "What type of vehicle is it, and roughly how old is it (in years)?",
+        };
       }
     }
 
     return res.json(data);
   } catch (err) {
-    console.error(err);
+    console.error("Gemini error:", err?.message || err);
     return res.status(500).json({ error: String(err?.message || err) });
   }
 });
 
-const port = Number(process.env.PORT);
+const port = Number(process.env.PORT || 4000);
 app.listen(port, () =>
   console.log(`Tina API listening on http://localhost:${port}`)
 );
