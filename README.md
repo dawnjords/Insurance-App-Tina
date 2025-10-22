@@ -69,7 +69,7 @@ cd Client
 npm run dev
 ```
 
-Vite typically serves at http://localhost:5173 and the backend at http://localhost:3000 (adjust as configured).
+Vite typically serves at http://localhost:5173 and the backend at http://localhost:4000 (adjust as configured).
 
 ## API (high-level contract)
 

@@ -1,92 +1,91 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-
-import { makeModel } from "./gemini/gemini.js";
-import { buildSystemPrompt } from "./gemini/tinaPrompt.js";
-import { safeParseJSON } from "./util/json.js";
-import { violatesRules } from "./domain/rules.js";
+import { TinaService } from "./services/tinaService.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Simple health
+// Constants
+const INTRO_MESSAGE = {
+  action: "ask",
+  message:
+    "I'm Tina. I help you choose the right vehicle insurance policy. May I ask a few questions to make sure I recommend the best policy for you?",
+};
+
+const DECLINE_MESSAGE = {
+  action: "recommend",
+  message:
+    "No worries. If you change your mind later, I can ask a few quick questions and recommend a policy.",
+  recommendedProducts: [],
+};
+
+// health chekc
 app.get("/health", (_req, res) =>
   res.json({ ok: true, model: "gemini-2.5-flash" })
 );
 
-// Main Tina endpoint
+// Tina endpoint
 app.post("/api/tina/next", async (req, res) => {
   const { history = [], consent = "unknown" } = req.body || {};
 
-  // 1) Opt-in intro: NOT model-driven
+  // intro/opt in
   if (history.length === 0) {
-    return res.json({
-      action: "ask",
-      message:
-        "I’m Tina. I help you choose the right insurance policy. May I ask a few personal questions to make sure I recommend the best fit?",
-      followUpQuestion: "Is it okay if I ask a few quick questions first?",
-    });
+    return res.json(INTRO_MESSAGE);
   }
 
-  // 2) Respect decline
+  // opt in declined
   if (consent === "declined") {
-    return res.json({
-      action: "recommend",
-      message:
-        "No worries. If you change your mind later, I can ask a few quick questions and recommend a policy.",
-      recommendedProducts: [],
-    });
+    return res.json(DECLINE_MESSAGE);
   }
 
-  // 3) Ask/recommend via model
+  // ask and recommend
   try {
-    const model = makeModel();
-    const system = buildSystemPrompt();
-
-    const contents = [
-      { role: "user", parts: [{ text: system }] }, // pseudo-system
-      ...history.map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.text }],
-      })),
-    ];
-
-    // Keep it simple and widely-compatible
-    const result = await model.generateContent({ contents });
-    const raw = result?.response?.text?.() ?? "";
-
-    let data = safeParseJSON(raw);
-
-    // Apply server-side rule guard on recommendations
-    if (
-      data.action === "recommend" &&
-      Array.isArray(data.recommendedProducts)
-    ) {
-      const facts = data.inferredFacts || {};
-      data.recommendedProducts = data.recommendedProducts.filter(
-        (r) => !violatesRules(r, facts)
-      );
-      if (data.recommendedProducts.length === 0) {
-        data = {
-          action: "ask",
-          message:
-            "I want to double-check a couple details so I can follow the eligibility rules.",
-          followUpQuestion:
-            "What type of vehicle is it, and roughly how old is it (in years)?",
-        };
-      }
-    }
-
-    return res.json(data);
+    const knownFacts = extractKnownInfo(history);
+    const response = await TinaService.getResponse(history, knownFacts);
+    res.json(response);
   } catch (err) {
-    console.error("Gemini error:", err?.message || err);
-    return res.status(500).json({ error: String(err?.message || err) });
+    console.error("Model error:", err);
+    res.status(500).json({
+      action: "ask",
+      message: "Sorry, I'm having technical difficulties. Could you try again?",
+    });
   }
 });
+
+function extractKnownInfo(history) {
+  const facts = {
+    vehicleType: null,
+    vehicleAgeYears: null,
+    coveragePreference: null,
+    isRacingCar: null,
+  };
+
+  return history.reduce((known, msg) => {
+    if (msg.role === "model") {
+      try {
+        const data = JSON.parse(msg.text);
+        if (data.inferredFacts) {
+          Object.entries(data.inferredFacts).forEach(([key, value]) => {
+            if (value != null) known[key] = value;
+          });
+        }
+      } catch (e) {}
+    }
+    return known;
+  }, facts);
+}
 
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () =>
   console.log(`Tina API listening on http://localhost:${port}`)
 );
+
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    action: "ask",
+    message: "I'm having trouble processing that. Could you please try again?",
+  });
+});

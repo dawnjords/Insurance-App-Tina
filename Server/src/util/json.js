@@ -1,10 +1,8 @@
 export function safeParseJSON(text) {
   if (!text) return fallbackAsk();
-  // try plain
   try {
     return JSON.parse(text);
   } catch {}
-  // try fenced or trailing JSON object
   const fence = text.match(/```(?:json)?\\n([\\s\\S]*?)\\n```/i);
   if (fence) {
     try {
