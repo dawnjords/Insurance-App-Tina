@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export default function App() {
   const [history, setHistory] = useState([]);
