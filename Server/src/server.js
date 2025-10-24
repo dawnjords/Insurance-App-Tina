@@ -77,7 +77,7 @@ function extractKnownInfo(history) {
   }, facts);
 }
 
-const port = Number(process.env.PORT || 4000);
+const port = Number(process.env.PORT);
 app.listen(port, () =>
   console.log(`Tina API listening on http://localhost:${port}`)
 );

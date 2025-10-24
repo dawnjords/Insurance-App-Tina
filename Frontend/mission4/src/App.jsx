@@ -131,7 +131,7 @@ export default function App() {
         </div>
 
         {/* Chat window w bubb;es*/}
-        <div className="h-[60vh] overflow-y-auto space-y-3 border border-slate-200 rounded-xl p-4 bg-slate-50">
+        <div className="h-[60vh] overflow-y-auto space-y-3 border border-slate-200 rounded-2xl p-4 bg-slate-50">
           {history.map((m, i) => {
             const isUser = m.role === "user";
             return (
@@ -209,9 +209,9 @@ export default function App() {
             {Array.isArray(lastTurn?.recommendedProducts) &&
             lastTurn.recommendedProducts.length > 0 ? (
               <div className="space-y-3">
-                <h3 className="text-lg font-semibold">Recommendation</h3>
+                <h3 className="text-lg">Recommendation</h3>
                 {lastTurn.recommendedProducts.map((p, i) => (
-                  <div key={i} className="border rounded-xl p-3 bg-white">
+                  <div key={i} className="border p-3 bg-white">
                     <div className="font-medium">{p.name}</div>
                     <div className="text-sm text-slate-600">{p.why}</div>
                   </div>
